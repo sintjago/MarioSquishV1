@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Squish</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: lightgray;
+    }
+
+    canvas {
+      border: 3px solid gray;
+      background-color: white;
+    }
+
+    #score {
+      font-size: 20px;
+      margin: 10px;
+    }
+
+    #language, #noCollision { 
+      margin: 10px;
+    }
+
+    #letterRecord {
+      margin-top: 15px;
+      font-size: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      max-width: 800px;
+    }
+
+    .letterItem {
+      margin-right: 15px;
+      cursor: pointer;
+    }
+
+    h1 {
+      margin: 10px;
+      font-size: 24px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Squish</h1>
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <div id="score">Score: 0</div>
+  <select id="language">
+    <option value="en">English</option>
+    <option value="es">Spanish</option>
+    <option value="ar">Arabic</option>
+    <option value="ru">Russian</option>
+    <option value="hi">Hindi</option>
+  </select>
+  <input type="checkbox" id="noCollision"> No Collision
+  <div id="letterRecord"></div>
+  
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score');
+    const languageDropdown = document.getElementById('language');
+    const noCollisionCheckbox = document.getElementById('noCollision');
+    const letterRecordDiv = document.getElementById('letterRecord');
+
+    let score = 0;
+    const groundHeight = 50;
+    const groundTolerance = 5; 
+    const borderWidth = 3; 
+    let letterRecord = {};
+
+    const player = { 
+      x: canvas.width / 2 - 20, 
+      y: canvas.height - groundHeight - 40 - borderWidth, 
+      width: 40,
+      height: 40,
+      dx: 0,
+      dy: 0,
+      speed: 4,
+      gravity: 1.2,
+      jumpStrength: 18,
+      alive: true,
+      onGround: true,
+      color: 'gray',
+      border: 'black'
+    };
+
+    const enemyLetters = {
+      en: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      es: 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ',
+      ar: 'ا ب ت ث ج ح خ د ذ ر ز س ش ص ض ط ظ ع غ ف ق ك ل م ن ه و ي',
+      ru: 'АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЫЭЮЯ',
+      hi: 'अआइईउऊएऐओऔअंअःकखगघचछजझटठडढतथदधनपफबभमयरलवशषसह'
+    };
+
+    const languageCodes = {
+      en: 'en-US',
+      es: 'es-ES',
+      ar: 'ar-SA',
+      ru: 'ru-RU',
+      hi: 'hi-IN'
+    };
+
+    const enemies = [];
+    const enemySpeed = 2; // Define default enemy speed
+
+    const enemyTypes = [
+      { speedMultiplier: 1, spawnRate: 1, color: 'darkgray', border: 'black' }, 
+      { speedMultiplier: 1.5, spawnRate: 0.5, color: 'lightgray', border: 'gray' },
+      { speedMultiplier: 2, spawnRate: 0.25, color: 'dimgray', border: 'darkgray' },
+      { speedMultiplier: 3, spawnRate: 0.15, color: 'gray', border: 'lightgray' },
+      { speedMultiplier: 4, spawnRate: 0.05, color: 'silver', border: 'black' }
+    ];
+
+    const ledges = [
+      {x: 0, y: 215, width: 200, height: 15}, 
+      {x: canvas.width / 2 - 150, y: 115, width: 300, height: 15}, 
+      {x: canvas.width - 200, y: 215, width: 200, height: 15} 
+    ];
+
+    function spawnEnemy() {
+      const letterSet = enemyLetters[languageDropdown.value];
+      
+      // Filter out spaces and empty characters from the letterSet
+      const filteredLetterSet = letterSet.replace(/\s+/g, '').split('');
+      
+      const validLedgeIndices = [0, 2];
+      const ledgeIndex = validLedgeIndices[Math.floor(Math.random() * validLedgeIndices.length)];
+      const ledge = ledges[ledgeIndex];
+      
+      // Ensure that we're picking from the filteredLetterSet
+      let letter = filteredLetterSet[Math.floor(Math.random() * filteredLetterSet.length)];
+
+      let enemyType = enemyTypes[0];
+      for (let i = 1; i < enemyTypes.length; i++) {
+        if (Math.random() < enemyTypes[i].spawnRate) {
+          enemyType = enemyTypes[i];
+          break;
+        }
+      }
+
+      const spawnX = ledgeIndex === 0 
+        ? ledge.x                   
+        : ledge.x + ledge.width - 40 - borderWidth; 
+
+      enemies.push({
+        x: spawnX,
+        y: ledge.y - 40,
+        width: 40,
+        height: 40,
+        letter: letter,
+        direction: ledgeIndex === 0 ? 1 : -1,
+        isAlive: true,
+        isFalling: false,
+        type: enemyType 
+      });
+    }
+
+    function drawPlayer() {
+      ctx.fillStyle = player.color;
+      ctx.strokeStyle = player.border;
+      ctx.lineWidth = borderWidth;
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+      ctx.strokeRect(player.x, player.y, player.width, player.height);
+    }
+
+    function drawEnemies() {
+      enemies.forEach(enemy => {
+        if (enemy.isAlive) {
+          ctx.fillStyle = enemy.type.color; 
+          ctx.strokeStyle = enemy.type.border; 
+          ctx.lineWidth = borderWidth;  
+          ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+          ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
+
+          ctx.fillStyle = 'white';
+          ctx.font = "20px Arial";
+
+          const textWidth = ctx.measureText(enemy.letter).width;
+          const textX = enemy.x + (enemy.width - textWidth) / 2;
+          ctx.fillText(enemy.letter, textX, enemy.y + 30);
+        }
+      });
+    }
+
+    function moveEnemies() {
+      enemies.forEach(enemy => {
+        if (enemy.isAlive) {
+          if (enemy.isFalling) {
+            enemy.y += player.gravity;
+
+            if (enemy.y + enemy.height + borderWidth > canvas.height - groundHeight) {
+              enemy.y = canvas.height - groundHeight - enemy.height - borderWidth;
+              enemy.isFalling = false;
+            }
+          } else {
+            enemy.x += enemy.direction * enemySpeed * enemy.type.speedMultiplier;
+
+            if (enemy.x + enemy.width + borderWidth > canvas.width) {
+              enemy.direction = -1;
+              enemy.x = canvas.width - enemy.width - borderWidth;
+            } else if (enemy.x < 0) {
+              enemy.direction = 1;
+              enemy.x = 0;
+            }
+
+            const ledge = ledges[enemy.direction === 1 ? 0 : 2];
+            if (enemy.x - borderWidth < ledge.x || enemy.x + enemy.width + borderWidth > ledge.x + ledge.width) {
+              enemy.isFalling = true;
+            }
+          }
+        }
+      });
+    }
+
+    function movePlayer() {
+      if (!player.alive) return;
+
+      if (!player.onGround) {
+        player.dy += player.gravity;
+		}
+
+      player.x += player.dx;
+      player.y += player.dy;
+
+      player.onGround = false;
+      ledges.forEach(ledge => {
+        if (player.x < ledge.x + ledge.width &&
+          player.x + player.width > ledge.x &&
+          player.y + player.height > ledge.y &&
+          player.y + player.height < ledge.y + ledge.height + groundTolerance) {
+          player.y = ledge.y - player.height;
+          player.dy = 0;
+          player.onGround = true;
+        }
+      });
+
+      if (player.y + player.height + borderWidth > canvas.height - groundHeight - groundTolerance) {
+        player.y = canvas.height - groundHeight - player.height - borderWidth;
+        player.dy = 0;
+        player.onGround = true;
+      }
+
+      if (player.x < 0) player.x = 0;
+      if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+    }
+
+    function checkCollisions() {
+      enemies.forEach(enemy => {
+        if (enemy.isAlive &&
+          player.x < enemy.x + enemy.width &&
+          player.x + player.width > enemy.x &&
+          player.y + player.height > enemy.y &&
+          player.y < enemy.y + enemy.height) {
+
+          if (player.dy > 0 &&
+            player.y + player.height <= enemy.y + 15 &&
+            player.y + player.height >= enemy.y - 15) {
+            // Squish enemy logic
+            enemy.isAlive = false;
+            player.dy = -10;
+            score += 10;
+            updateScore();
+            updateLetterRecord(enemy.letter);
+            speakLetter(enemy.letter);
+          } else if (!noCollisionCheckbox.checked) {
+            // Player dies from touching enemy (if no collision mode is not checked)
+            player.alive = false;
+            alert("Game Over! Final Score: " + score);
+            resetGame();
+          }
+        }
+      });
+    }
+
+    function updateLetterRecord(letter) {
+      if (letterRecord[letter]) {
+        letterRecord[letter] += 1;
+      } else {
+        letterRecord[letter] = 1;
+      }
+      displayLetterRecord();
+    }
+
+    function displayLetterRecord() {
+      letterRecordDiv.innerHTML = ''; 
+      for (let letter in letterRecord) {
+        const letterItem = document.createElement('span');
+        letterItem.textContent = `${letter} * ${letterRecord[letter]}`;
+        letterItem.classList.add('letterItem');
+        letterItem.addEventListener('click', () => speakLetter(letter));
+        letterRecordDiv.appendChild(letterItem);
+      }
+    }
+
+    function speakLetter(letter) {
+      const utterance = new SpeechSynthesisUtterance(letter);
+      utterance.lang = languageCodes[languageDropdown.value];
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function updateScore() {
+      scoreDisplay.textContent = "Score: " + score;
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawGround() {
+      ctx.fillStyle = 'lightgray';
+      ctx.strokeStyle = 'gray'; // Changed to a shade of gray
+      ctx.lineWidth = borderWidth;
+      ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+      ctx.strokeRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+    }
+
+    function drawLedges() {
+      ctx.fillStyle = 'black';
+      ctx.strokeStyle = 'darkgray'; // Changed to a shade of gray
+      ctx.lineWidth = borderWidth;
+      ledges.forEach(ledge => {
+        ctx.fillRect(ledge.x, ledge.y, ledge.width, ledge.height);
+        ctx.strokeRect(ledge.x, ledge.y, ledge.width, ledge.height);
+      });
+    }
+
+    function update() {
+      clearCanvas();
+      drawPlayer();
+      drawEnemies();
+      movePlayer();
+      moveEnemies();
+      checkCollisions();
+      drawGround();
+      drawLedges();
+      requestAnimationFrame(update);
+    }
+
+    function handleKeyDown(e) {
+      if (!player.alive) return;
+      if (e.key === 'ArrowRight' || e.key === 'd') player.dx = player.speed;
+      if (e.key === 'ArrowLeft' || e.key === 'a') player.dx = -player.speed;
+      if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && player.onGround) {
+        player.dy = -player.jumpStrength;
+        player.onGround = false;
+      }
+    }
+
+    function handleKeyUp(e) {
+      if (!player.alive) return;
+      if (e.key === 'ArrowRight' || e.key === 'd') player.dx = 0;
+      if (e.key === 'ArrowLeft' || e.key === 'a') player.dx = 0;
+    }
+
+    function resetGame() {
+      player.x = canvas.width / 2 - 20;
+      player.y = canvas.height - groundHeight - 40 - borderWidth; 
+      player.dx = 0;
+      player.dy = 0;
+      player.alive = true;
+      score = 0;
+      letterRecord = {}; // Reset letter record
+      updateScore();
+      enemies.length = 0;
+      displayLetterRecord(); // Clear letter record display
+    }
+
+    function changeLanguage() {
+      enemies.length = 0;
+      letterRecord = {}; // Clear letter record when changing language
+      displayLetterRecord();
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    languageDropdown.addEventListener('change', changeLanguage);
+
+    setInterval(spawnEnemy, 2000);
+
+    update();
+
+  </script>
+</body>
+</html>
